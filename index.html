@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  </head>
+  <body style="margin:0">
+    <!-- AR scene: transparent renderer to show camera passthrough -->
+    <a-scene
+      renderer="alpha: true; physicallyCorrectLights: true"
+      webxr="requiredFeatures: local-floor; optionalFeatures: hit-test, dom-overlay"
+      vr-mode-ui="enabled: true">
+      
+      <!-- Lights are subtle; AR lighting comes from real world -->
+      <a-entity light="type: ambient; intensity: 0.8"></a-entity>
+      <a-entity camera position="0 1.6 0"></a-entity>
+
+      <!-- Spawned content will sit a few meters in front of you -->
+      <a-entity id="spawner"></a-entity>
+
+      <script>
+        // Spawn random floating spheres in AR too
+        const N = 20;
+        const forward = 2.5;       // shift content forward from the start pose
+        const area = { x: 2.0, y: 1.6, z: 2.0 };
+        const colors = ["#ff6a6a","#6ac8ff","#7cff93","#ffd166","#c792ea","#00d1b2","#ff9f1c","#4ecdc4"];
+        const spawner = document.getElementById('spawner');
+
+        function r(min,max){ return Math.random()*(max-min)+min; }
+        function pick(a){ return a[Math.floor(Math.random()*a.length)]; }
+
+        // Place the whole cluster in front of the camera start
+        spawner.setAttribute('position', `0 0 -${forward}`);
+
+        for (let i = 0; i < N; i++) {
+          const x = r(-area.x, area.x);
+          const y = r(0.3, area.y);
+          const z = -r(0.8, area.z);
+
+          const sphere = document.createElement('a-sphere');
+          sphere.setAttribute('position', `${x} ${y} ${z}`);
+          sphere.setAttribute('radius', r(0.12, 0.5).toFixed(2));
+          sphere.setAttribute('color', pick(colors));
+          sphere.setAttribute('opacity', 0.95);
+
+          const toY = (y + r(0.3, 1.0)).toFixed(2);
+          const dur = Math.floor(r(1600, 3800));
+          const delay = Math.floor(r(0, 1200));
+
+          sphere.setAttribute('animation__float', {
+            property: 'position',
+            dir: 'alternate',
+            loop: true,
+            to: `${x} ${toY} ${z}`,
+            dur,
+            easing: 'easeInOutSine',
+            delay
+          });
+
+          spawner.appendChild(sphere);
+        }
+      </script>
+    </a-scene>
+  </body>
+</html>
