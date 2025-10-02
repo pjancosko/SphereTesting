@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>A-Frame • Distinct-Color Spheres</title>
+  <title>A-Frame • Poppable Spheres</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <style>
@@ -27,9 +27,14 @@
     <button id="clear">Clear</button>
     <button id="autospawn">Auto-Spawn</button>
   </div>
-  <div class="hint">Tip: click anywhere to spawn one sphere near you. “Auto-Spawn” toggles background spawning.</div>
+  <div class="hint">Tap/click spheres to pop them. Click on the scene (not UI) to add one near you.</div>
 
-  <a-scene renderer="colorManagement:true; physicallyCorrectLights:true">
+  <!-- Enable mouse/touch raycasting so taps can hit entities with class ".clickable" -->
+  <a-scene
+    renderer="colorManagement:true; physicallyCorrectLights:true"
+    cursor="rayOrigin: mouse"
+    raycaster="objects: .clickable"
+  >
     <!-- Camera rig -->
     <a-entity id="rig" position="0 0 0">
       <a-entity id="cam" camera position="0 1.6 0" look-controls wasd-controls></a-entity>
@@ -53,29 +58,58 @@
 
     let auto = false, autoTimer = null;
 
-    // === DISTINCT COLORS ===
-    // Evenly step around the hue wheel so each sphere is clearly different.
-    // 47° step is coprime with 360, so you cycle through all hues before repeating.
+    // === DISTINCT COLORS (evenly spaced hues) ===
     let sphereCount = 0;
     function nextColor() {
       const hue = (sphereCount * 47) % 360;
       sphereCount++;
-      return `hsl(${hue}, 80%, 55%)`; // bright, saturated
+      return `hsl(${hue}, 80%, 55%)`;
     }
+
+    // Component to pop on click (tap)
+    AFRAME.registerComponent('pop-on-click', {
+      init() {
+        this.popped = false;
+        this.el.addEventListener('click', () => {
+          if (this.popped) return;
+          this.popped = true;
+
+          // Disable further raycast hits
+          this.el.classList.remove('clickable');
+
+          // Pop animation: quick squash + fade out
+          this.el.setAttribute('animation__pop', {
+            property: 'scale', from: this.el.getAttribute('scale') || '1 1 1',
+            to: '0 0 0', dur: 220, easing: 'easeInBack'
+          });
+          this.el.setAttribute('animation__fade', {
+            property: 'material.opacity', from: this.el.getAttribute('material').opacity || 1,
+            to: 0, dur: 200, easing: 'linear'
+          });
+
+          // Remove after animation completes
+          setTimeout(() => this.el.remove(), 230);
+        });
+      }
+    });
 
     function makeBobbingSphere(pos, radius){
       const s = document.createElement('a-sphere');
+      s.classList.add('clickable');
       s.setAttribute('position', pos);
       s.setAttribute('radius', radius.toFixed(3));
-      s.setAttribute('color', nextColor());
+      // transparent material so we can animate opacity
+      s.setAttribute('material', `color: ${nextColor()}; opacity: 1; transparent: true; metalness: 0; roughness: 0.4`);
       s.setAttribute('shadow', 'cast:true; receive:false');
+      s.setAttribute('pop-on-click', '');
 
-      // gentle bobbing animation
+      // gentle bobbing
       const [px, py, pz] = pos.split(' ').map(Number);
       const amp = 0.05 + Math.random()*0.07;     // 5–12 cm
       const dur = 2000 + Math.random()*1500;     // 2–3.5 s
       s.setAttribute('animation__bob',
         `property: position; dir: alternate; dur: ${dur}; loop: true; to: ${px} ${(py+amp).toFixed(3)} ${pz}`);
+
       return s;
     }
 
@@ -118,117 +152,3 @@
   </script>
 </body>
 </html>
-<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8"/>
-    <title>No-Marker Camera Backdrop + Floating Spheres</title>
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <style>
-      html, body { margin:0; height:100%; overflow:hidden; }
-      /* Camera video behind the 3D scene */
-      #bg {
-        position: fixed; inset: 0;
-        width: 100vw; height: 100vh;
-        object-fit: cover; z-index: -1; background:#000;
-      }
-      #start {
-        position: fixed; inset: 0 0 auto 0; height: 56px;
-        display:flex; align-items:center; justify-content:center;
-        background: rgba(0,0,0,.6); color:#fff; font-family: system-ui, sans-serif;
-      }
-      #start button {
-        padding: 10px 16px; border:0; border-radius:8px; font-size:16px;
-      }
-    </style>
-  </head>
-  <body>
-    <!-- Camera backdrop -->
-    <video id="bg" autoplay playsinline muted></video>
-
-    <!-- Tap-to-start (needed by iOS for camera/motion) -->
-    <div id="start"><button id="go">Tap to start</button></div>
-
-    <!-- Transparent A-Frame scene over the video -->
-    <a-scene renderer="alpha:true; physicallyCorrectLights:false">
-      <a-entity camera look-controls wasd-controls position="0 1.6 0"></a-entity>
-      <a-entity id="spawner"></a-entity>
-    </a-scene>
-
-    <script>
-      const video = document.getElementById('bg');
-      const startUI = document.getElementById('start');
-      const goBtn = document.getElementById('go');
-
-      async function enableMotionPermission() {
-        try {
-          if (typeof DeviceMotionEvent !== 'undefined' &&
-              typeof DeviceMotionEvent.requestPermission === 'function') {
-            await DeviceMotionEvent.requestPermission();
-          }
-        } catch(e) { /* ignore */ }
-      }
-
-      async function startCamera() {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: 'environment' } }, audio: false
-          });
-          video.srcObject = stream;
-          await video.play().catch(()=>{});
-        } catch (e) {
-          console.error('Camera error:', e);
-        }
-      }
-
-      function spawnSpheres() {
-        const root = document.getElementById('spawner');
-        const colors = ["#ff6a6a","#6ac8ff","#7cff93","#ffd166","#c792ea","#00d1b2","#ff9f1c","#4ecdc4"];
-        const rand = (a,b)=>Math.random()*(b-a)+a;
-        const pick = a=>a[Math.floor(Math.random()*a.length)];
-        const N = 24;
-
-        for (let i=0;i<N;i++){
-          const theta = rand(0, Math.PI*2);
-          const r = rand(1.5, 3.5);         // distance from camera
-          const x = Math.cos(theta) * r;
-          const z = -Math.sin(theta) * r;   // -Z is forward
-          const y = rand(0.3, 2.2);
-
-          const s = document.createElement('a-sphere');
-          s.setAttribute('position', `${x} ${y} ${z}`);
-          s.setAttribute('radius', rand(0.12, 0.5).toFixed(2));
-          s.setAttribute('color', pick(colors));
-          s.setAttribute('opacity', 0.95);
-
-          const toY = (y + rand(0.3, 1.0)).toFixed(2);
-          s.setAttribute('animation__float', {
-            property: 'position', dir: 'alternate', loop: true,
-            to: `${x} ${toY} ${z}`, dur: Math.floor(rand(1600, 3600)),
-            easing: 'easeInOutSine', delay: Math.floor(rand(0, 1200))
-          });
-
-          root.appendChild(s);
-        }
-
-        // Optional: tap to add a new sphere
-        window.addEventListener('touchstart', () => {
-          const x = rand(-2,2), y = rand(0.3,2), z = -rand(1,3);
-          const s = document.createElement('a-sphere');
-          s.setAttribute('position', `${x} ${y} ${z}`);
-          s.setAttribute('radius', rand(0.12,0.5).toFixed(2));
-          s.setAttribute('color', pick(colors));
-          root.appendChild(s);
-        }, {passive:true});
-      }
-
-      goBtn.addEventListener('click', async ()=>{
-        startUI.style.display = 'none';
-        await enableMotionPermission();
-        await startCamera();
-        spawnSpheres();
-      }, { once:true });
-    </script>
-  </body>
-</html>
-
