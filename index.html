@@ -2,45 +2,41 @@
 <html>
   <head>
     <meta charset="utf-8"/>
-    <title>AR.js Spheres (iOS compatible)</title>
+    <title>AR.js Marker Test</title>
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js/aframe/build/aframe-ar.js"></script>
-    <style> body { margin: 0; overflow: hidden; } </style>
+    <style>
+      body{margin:0;overflow:hidden}
+      #status{position:fixed;left:0;right:0;top:0;padding:10px;
+        text-align:center;background:rgba(0,0,0,.6);color:#fff;font-family:sans-serif;
+        z-index:10}
+    </style>
   </head>
   <body>
-    <a-scene embedded vr-mode-ui="enabled: false"
-             arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false">
-      <a-marker preset="hiro">
-        <a-entity id="spawner"></a-entity>
+    <div id="status">Looking for HIRO marker…</div>
+
+    <a-scene
+      embedded
+      vr-mode-ui="enabled:false"
+      arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled:true">
+
+      <!-- This is the marker we track -->
+      <a-marker preset="hiro" id="hiroMarker">
+        <!-- BIG, easy-to-see object at marker center -->
+        <a-box position="0 0.25 0" depth="0.5" height="0.5" width="0.5" color="red"></a-box>
+        <!-- One big sphere too -->
+        <a-sphere position="0.6 0.4 0" radius="0.25" color="#4ecdc4"
+                  animation="property: position; dir: alternate; loop: true; to: 0.6 0.7 0; dur: 1500; easing: easeInOutSine"></a-sphere>
       </a-marker>
+
       <a-entity camera></a-entity>
 
       <script>
-        const N = 12;
-        const colors = ["#FF6A6A","#6AC8FF","#7CFF93","#FFD166","#C792EA","#00D1B2","#FF9F1C","#4ECDC4"];
-        const r = (a,b) => Math.random() * (b - a) + a;
-        const pick = arr => arr[Math.floor(Math.random() * arr.length)];
-        const root = document.getElementById('spawner');
-
-        for (let i = 0; i < N; i++) {
-          const x = r(-0.5, 0.5);
-          const y = r(0.1, 0.8);
-          const z = r(-0.5, 0.5);
-          const s = document.createElement('a-sphere');
-          s.setAttribute('position', `${x} ${y} ${z}`);
-          s.setAttribute('radius', r(0.05,0.18).toFixed(2));
-          s.setAttribute('color', pick(colors));
-          s.setAttribute('animation__float', {
-            property: 'position', dir: 'alternate', loop: true,
-            to: `${x} ${(y + r(0.1, 0.3)).toFixed(2)} ${z}`,
-            dur: Math.floor(r(1500, 3000)),
-            easing: 'easeInOutSine',
-            delay: Math.floor(r(0, 1000))
-          });
-          root.appendChild(s);
-        }
+        const status = document.getElementById('status');
+        const marker = document.getElementById('hiroMarker');
+        marker.addEventListener('markerFound', ()=> status.textContent = 'Marker FOUND ✅');
+        marker.addEventListener('markerLost',  ()=> status.textContent = 'Looking for HIRO marker…');
       </script>
     </a-scene>
   </body>
 </html>
-
