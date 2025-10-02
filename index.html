@@ -2,54 +2,112 @@
 <html>
   <head>
     <meta charset="utf-8"/>
-    <title>AR.js Floating Spheres</title>
+    <title>No-Marker Camera Backdrop + Floating Spheres</title>
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <!-- AR.js for A-Frame -->
-    <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js/aframe/build/aframe-ar.js"></script>
-    <style>body{margin:0;overflow:hidden}</style>
+    <style>
+      html, body { margin:0; height:100%; overflow:hidden; }
+      /* Camera video behind the 3D scene */
+      #bg {
+        position: fixed; inset: 0;
+        width: 100vw; height: 100vh;
+        object-fit: cover; z-index: -1; background:#000;
+      }
+      #start {
+        position: fixed; inset: 0 0 auto 0; height: 56px;
+        display:flex; align-items:center; justify-content:center;
+        background: rgba(0,0,0,.6); color:#fff; font-family: system-ui, sans-serif;
+      }
+      #start button {
+        padding: 10px 16px; border:0; border-radius:8px; font-size:16px;
+      }
+    </style>
   </head>
   <body>
-    <!-- AR.js scene turns on your iPhone camera automatically -->
-    <a-scene embedded vr-mode-ui="enabled:false"
-             arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled:false">
-      
-      <!-- Anchor all content to the HIRO marker -->
-      <a-marker preset="hiro">
-        <a-entity id="spawner"></a-entity>
-      </a-marker>
+    <!-- Camera backdrop -->
+    <video id="bg" autoplay playsinline muted></video>
 
-      <!-- Required camera entity -->
-      <a-entity camera></a-entity>
+    <!-- Tap-to-start (needed by iOS for camera/motion) -->
+    <div id="start"><button id="go">Tap to start</button></div>
 
-      <script>
-        // Procedural floating spheres (your simple spawner)
-        const N = 20;
-        const colors = ["#FF6A6A","#6AC8FF","#7CFF93","#FFD166","#C792EA","#00D1B2","#FF9F1C","#4ECDC4"];
-        const rand = (a,b)=>Math.random()*(b-a)+a;
-        const pick = a => a[Math.floor(Math.random()*a.length)];
+    <!-- Transparent A-Frame scene over the video -->
+    <a-scene renderer="alpha:true; physicallyCorrectLights:false">
+      <a-entity camera look-controls wasd-controls position="0 1.6 0"></a-entity>
+      <a-entity id="spawner"></a-entity>
+    </a-scene>
+
+    <script>
+      const video = document.getElementById('bg');
+      const startUI = document.getElementById('start');
+      const goBtn = document.getElementById('go');
+
+      async function enableMotionPermission() {
+        try {
+          if (typeof DeviceMotionEvent !== 'undefined' &&
+              typeof DeviceMotionEvent.requestPermission === 'function') {
+            await DeviceMotionEvent.requestPermission();
+          }
+        } catch(e) { /* ignore */ }
+      }
+
+      async function startCamera() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' } }, audio: false
+          });
+          video.srcObject = stream;
+          await video.play().catch(()=>{});
+        } catch (e) {
+          console.error('Camera error:', e);
+        }
+      }
+
+      function spawnSpheres() {
         const root = document.getElementById('spawner');
+        const colors = ["#ff6a6a","#6ac8ff","#7cff93","#ffd166","#c792ea","#00d1b2","#ff9f1c","#4ecdc4"];
+        const rand = (a,b)=>Math.random()*(b-a)+a;
+        const pick = a=>a[Math.floor(Math.random()*a.length)];
+        const N = 24;
 
-        for (let i = 0; i < N; i++) {
-          const x = rand(-0.5, 0.5);
-          const y = rand(0.1, 0.8);
-          const z = rand(-0.5, 0.5);
+        for (let i=0;i<N;i++){
+          const theta = rand(0, Math.PI*2);
+          const r = rand(1.5, 3.5);         // distance from camera
+          const x = Math.cos(theta) * r;
+          const z = -Math.sin(theta) * r;   // -Z is forward
+          const y = rand(0.3, 2.2);
 
           const s = document.createElement('a-sphere');
           s.setAttribute('position', `${x} ${y} ${z}`);
-          s.setAttribute('radius', rand(0.05, 0.18).toFixed(2));
+          s.setAttribute('radius', rand(0.12, 0.5).toFixed(2));
           s.setAttribute('color', pick(colors));
           s.setAttribute('opacity', 0.95);
 
-          const toY = (y + rand(0.1, 0.3)).toFixed(2);
+          const toY = (y + rand(0.3, 1.0)).toFixed(2);
           s.setAttribute('animation__float', {
             property: 'position', dir: 'alternate', loop: true,
-            to: `${x} ${toY} ${z}`, dur: Math.floor(rand(1500, 3000)),
-            easing: 'easeInOutSine', delay: Math.floor(rand(0, 900))
+            to: `${x} ${toY} ${z}`, dur: Math.floor(rand(1600, 3600)),
+            easing: 'easeInOutSine', delay: Math.floor(rand(0, 1200))
           });
 
           root.appendChild(s);
         }
-      </script>
-    </a-scene>
+
+        // Optional: tap to add a new sphere
+        window.addEventListener('touchstart', () => {
+          const x = rand(-2,2), y = rand(0.3,2), z = -rand(1,3);
+          const s = document.createElement('a-sphere');
+          s.setAttribute('position', `${x} ${y} ${z}`);
+          s.setAttribute('radius', rand(0.12,0.5).toFixed(2));
+          s.setAttribute('color', pick(colors));
+          root.appendChild(s);
+        }, {passive:true});
+      }
+
+      goBtn.addEventListener('click', async ()=>{
+        startUI.style.display = 'none';
+        await enableMotionPermission();
+        await startCamera();
+        spawnSpheres();
+      }, { once:true });
+    </script>
   </body>
 </html>
