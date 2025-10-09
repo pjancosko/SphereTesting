@@ -10,9 +10,11 @@
   <script src="https://raw.githack.com/fcor/arjs-gestures/master/dist/gestures.js"></script>
   <style>
     body{margin:0;overflow:hidden;font-family:system-ui,sans-serif}
+    .hint{position:fixed;left:50%;transform:translateX(-50%);bottom:10px;background:rgba(0,0,0,.55);color:#fff;padding:8px 12px;border-radius:8px;font-size:14px;z-index:10}
   </style>
 </head>
 <body>
+  <div class="hint">Tap/click spheres to pop. New spheres spawn automatically. (Audio plays on pop.)</div>
 
   <!-- ONE scene, marker-less AR.js -->
   <a-scene
@@ -23,16 +25,11 @@
     arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false"
     gesture-detector
   >
-    <!-- preload your GLB -->
-    <a-assets timeout="30000">
-      <a-asset-item id="bubbleGLB" src="BubbleTest.glb"></a-asset-item>
-    </a-assets>
-
     <!-- Lights (for shading only; video is the background) -->
     <a-entity light="type: ambient; intensity: 0.9"></a-entity>
     <a-entity light="type: directional; intensity: 0.8" position="0 4 3"></a-entity>
 
-    <!-- Camera with mouse/touch ray so clicks/taps work (left as-is) -->
+    <!-- Camera with mouse/touch ray so clicks/taps work -->
     <a-entity id="cam"
               camera
               position="0 1.6 0"
@@ -47,39 +44,134 @@
     const cam   = document.querySelector('#cam');
 
     // ---- TUNABLES ----
-    const SPAWN_INTERVAL_MS = 600;  // how often to add a bubble
-    const MAX_BUBBLES       = 120;  // cap count
+    const SPAWN_INTERVAL_MS = 600;
+    const MAX_SPHERES       = 120;
+    const DESPAWN_MS        = 20000; // auto-remove if not popped
 
-    // Create one bubble instance of your GLB at 'pos'
-    function makeBubbleEntity(pos, scale=1){
-      const e = document.createElement('a-entity');
-      e.setAttribute('gltf-model', '#bubbleGLB');
-      e.setAttribute('position', pos);
-      e.setAttribute('scale', `${scale} ${scale} ${scale}`);
-
-      // Random gentle rotation to avoid uniformity
-      const rx = (Math.random()*20-10).toFixed(3);
-      const ry = (Math.random()*360).toFixed(3);
-      const rz = (Math.random()*20-10).toFixed(3);
-      e.setAttribute('rotation', `${rx} ${ry} ${rz}`);
-
-      // Optional subtle bob (comment out if not wanted)
-      const [px, py, pz] = pos.split(' ').map(Number);
-      const amp = 0.05 + Math.random()*0.07;
-      const dur = 2000 + Math.random()*1500;
-      e.setAttribute('animation__bob', `property: position; dir: alternate; dur: ${dur}; loop: true; to: ${px} ${(py+amp).toFixed(3)} ${pz}`);
-
-      // If your GLB has an idle animation, this plays it; otherwise it just sits.
-      e.setAttribute('animation-mixer', 'loop: repeat');
-
-      return e;
+    // === AUDIO (inline Web Audio, no external files) ===
+    let audioCtx = null;
+    function ensureAudio() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    }
+    function envGain(duration, attack = 0.005, release = 0.15, peak = 0.25) {
+      const now = audioCtx.currentTime, g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.linearRampToValueAtTime(peak, now + attack);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(attack + release, duration));
+      return g;
+    }
+    function playPop() {
+      const dur = 0.12, osc = audioCtx.createOscillator(), now = audioCtx.currentTime;
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(700, now);
+      osc.frequency.exponentialRampToValueAtTime(180, now + dur);
+      const g = envGain(dur, 0.002, 0.12, 0.35);
+      osc.connect(g).connect(audioCtx.destination);
+      osc.start(now); osc.stop(now + dur + 0.02);
+    }
+    function playChime() {
+      const now = audioCtx.currentTime;
+      const notes = [440, 493.88, 587.33, 659.25, 783.99];
+      const f = notes[Math.floor(Math.random()*notes.length)];
+      const dur = 0.9 + Math.random()*0.5;
+      const osc = audioCtx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(f, now);
+      const lfo = audioCtx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 5.2;
+      const lfoGain = audioCtx.createGain(); lfoGain.gain.value = 3.5;
+      lfo.connect(lfoGain); lfoGain.connect(osc.frequency);
+      const g = envGain(dur, 0.015, 0.8, 0.18);
+      const lp = audioCtx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(4000, now);
+      osc.connect(lp).connect(g).connect(audioCtx.destination);
+      lfo.start(now); osc.start(now);
+      osc.stop(now + dur + 0.05); lfo.stop(now + dur + 0.05);
+    }
+    function playBreathyPad() {
+      const now = audioCtx.currentTime, padDur = 2.6, attack = 0.18, release = 2.2;
+      // noise
+      const length = Math.floor(audioCtx.sampleRate * 2.0);
+      const noiseBuf = audioCtx.createBuffer(1, length, audioCtx.sampleRate);
+      const data = noiseBuf.getChannelData(0); for (let i=0;i<length;i++) data[i] = Math.random()*2-1;
+      const noise = audioCtx.createBufferSource(); noise.buffer = noiseBuf; noise.loop = true;
+      const lp = audioCtx.createBiquadFilter(); lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(4500, now); lp.frequency.exponentialRampToValueAtTime(900, now + padDur);
+      const noiseGain = envGain(padDur, attack, release, 0.10);
+      // tone
+      const tone = audioCtx.createOscillator(); tone.type = 'triangle';
+      const startF = 560 + Math.random()*140, endF = startF*0.52;
+      tone.frequency.setValueAtTime(startF, now);
+      tone.frequency.exponentialRampToValueAtTime(endF, now + 1.8);
+      const toneLP = audioCtx.createBiquadFilter(); toneLP.type = 'lowpass';
+      toneLP.frequency.setValueAtTime(3200, now); toneLP.frequency.exponentialRampToValueAtTime(900, now + padDur);
+      const toneGain = envGain(padDur, attack, release, 0.08);
+      const mix = audioCtx.createGain(); mix.gain.value = 1.0;
+      noise.connect(lp).connect(noiseGain).connect(mix);
+      tone.connect(toneLP).connect(toneGain).connect(mix);
+      mix.connect(audioCtx.destination);
+      noise.start(now); tone.start(now);
+      noise.stop(now + padDur + 0.1); tone.stop(now + padDur + 0.1);
+    }
+    function popSound(){
+      ensureAudio();
+      playPop();
+      setTimeout(()=>playChime(), 20 + Math.random()*40);
+      setTimeout(()=>playBreathyPad(), 40 + Math.random()*60);
     }
 
-    // Spawn GLBs in front/around the camera (marker-less)
+    // Color cycler
+    let sphereCount = 0;
+    function nextColor(){ const hue = (sphereCount*47)%360; sphereCount++; return `hsl(${hue},80%,55%)`; }
+
+    // Poppable component
+    AFRAME.registerComponent('pop-on-click',{
+      init(){
+        this.popped=false;
+        const pop=()=>{
+          if(this.popped) return;
+          this.popped=true; this.el.classList.remove('clickable'); popSound();
+          this.el.setAttribute('animation__pop',{property:'scale',from:this.el.getAttribute('scale')||'1 1 1',to:'0 0 0',dur:220,easing:'easeInBack'});
+          const mat=this.el.getAttribute('material')||{}; const fromOpacity=(typeof mat.opacity==='number')?mat.opacity:1;
+          this.el.setAttribute('animation__fade',{property:'material.opacity',from:fromOpacity,to:0,dur:200,easing:'linear'});
+          setTimeout(()=>this.el.remove(),240);
+        };
+        this.el.addEventListener('click',pop);
+        this.el.addEventListener('mousedown',pop);
+        this.el.addEventListener('touchstart',pop,{passive:true});
+      }
+    });
+
+    function makeBobbingSphere(pos, radius){
+      const s=document.createElement('a-sphere');
+      s.classList.add('clickable');
+      s.setAttribute('position',pos);
+      s.setAttribute('radius',radius.toFixed(3));
+      s.setAttribute('material',`color:${nextColor()}; opacity:1; transparent:true; metalness:0; roughness:0.4`);
+      s.setAttribute('shadow','cast:true; receive:false');
+      s.setAttribute('pop-on-click','');
+
+      const [px,py,pz]=pos.split(' ').map(Number);
+      const amp=0.05+Math.random()*0.07;
+      const dur=2000+Math.random()*1500;
+      s.setAttribute('animation__bob',`property: position; dir: alternate; dur: ${dur}; loop: true; to: ${px} ${(py+amp).toFixed(3)} ${pz}`);
+
+      if (DESPAWN_MS>0){
+        setTimeout(()=>{
+          if(!s.isConnected) return;
+          s.classList.remove('clickable');
+          s.setAttribute('animation__fadeout',{property:'material.opacity',from:1,to:0,dur:350,easing:'linear'});
+          s.setAttribute('animation__shrink',{property:'scale',to:'0 0 0',dur:350,easing:'easeInBack'});
+          setTimeout(()=>s.remove(),360);
+        }, DESPAWN_MS);
+      }
+      return s;
+    }
+
+    // Spawn spheres in front/around the **camera** (marker-less)
     function spawnNearCamera(){
       // cap count
-      const all = scene.querySelectorAll('[gltf-model]');
-      if (all.length >= MAX_BUBBLES) all[0]?.remove();
+      const all = scene.querySelectorAll('a-sphere');
+      if (all.length >= MAX_SPHERES) all[0]?.remove();
 
       // camera world pos & forward
       const camObj = cam.object3D;
@@ -100,19 +192,17 @@
         .add(right.multiplyScalar(jitterR))
         .add(up.multiplyScalar(jitterU));
 
-      // Adjust scale to your model’s size
-      const scale = 0.4 + Math.random()*0.8;
-
-      const bubble = makeBubbleEntity(
-        `${pos.x.toFixed(3)} ${Math.max(0.1,pos.y).toFixed(3)} ${pos.z.toFixed(3)}`,
-        scale
-      );
-      scene.appendChild(bubble);
+      const radius = 0.1 + Math.random()*0.7; // 0.1–0.8 m
+      const sphere = makeBobbingSphere(`${pos.x.toFixed(3)} ${Math.max(0.1,pos.y).toFixed(3)} ${pos.z.toFixed(3)}`, radius);
+      scene.appendChild(sphere);
     }
 
     // Seed + autospawn
     for (let i=0;i<12;i++) spawnNearCamera();
     setInterval(spawnNearCamera, SPAWN_INTERVAL_MS);
+
+    // Prime audio on first gesture (mobile policy)
+    window.addEventListener('pointerdown', ensureAudio, {once:true, passive:true});
   </script>
 </body>
 </html>
