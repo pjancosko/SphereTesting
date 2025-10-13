@@ -3,124 +3,256 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <!-- Libs -->
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
   <script src="https://rawgit.com/donmccurdy/aframe-extras/v6.0.0/dist/aframe-extras.loaders.min.js"></script>
-  <script src="https://raw.githack.com/fcor/arjs-gestures/master/dist/gestures.js"></script>
-  <style>
-    body{margin:0;overflow:hidden;font-family:system-ui,sans-serif}
-  </style>
 </head>
 <body>
-
-  <!-- ONE scene, marker-less AR.js -->
   <a-scene
     id="scene"
     embedded
     renderer="logarithmicDepthBuffer:true; colorManagement:true; physicallyCorrectLights:true"
     vr-mode-ui="enabled:false"
-    arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false"
-    gesture-detector
-  >
-    <!-- Preload your GLB (update path if needed) -->
-    <a-assets id="assets" timeout="30000">
-      <a-asset-item id="bubbleGLB" src="BubblesTest.glb"></a-asset-item>
+    arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false">
+
+    <a-assets id="assets">
+      <!-- Models: add more <a-asset-item> if you want different shapes later -->
+      <a-asset-item id="bubbleModel" src="BubbleTest2.glb"></a-asset-item>
+      <img id="env" src="envIMG.jpg" alt="environment map for reflections">
     </a-assets>
 
-    <!-- Lights (for shading only; video is the background) -->
-    <a-entity light="type: ambient; intensity: 0.9"></a-entity>
-    <a-entity light="type: directional; intensity: 0.8" position="0 4 3"></a-entity>
+    <a-entity light="type: ambient; intensity: 0.5"></a-entity>
+<a-entity light="type: directional; intensity: 1.4" position="0 2 2"></a-entity>
+<!-- optional: either delete this next light or keep it faint -->
+<a-entity light="type: point; intensity: 0.35; distance: 6; color: #ff99ff" position="1 2 2"></a-entity>
 
-    <!-- Camera (unchanged) -->
-    <a-entity id="cam"
-              camera
-              position="0 1.6 0"
-              look-controls
-              cursor="rayOrigin: mouse; fuse: false"
-              raycaster="objects: .clickable; far: 100">
-    </a-entity>
+
+    <!-- Camera -->
+    <a-entity id="cam" camera position="0 1.6 0" look-controls></a-entity>
+
+    <!-- Spawner root (will create 10 animated bubbles around the camera) -->
+    <a-entity id="bubble-root"
+  bubble-spawner="
+    count: 12;
+    minScale: 4; maxScale: 34;
+    radiusMin: 1.4; radiusMax: 3.8;
+    forwardBias: 0.9;
+    minSeparation: 0.8;
+  ">
+</a-entity>
+
+
   </a-scene>
 
-  <script>
-    const scene  = document.querySelector('#scene');
-    const cam    = document.querySelector('#cam');
-    const assets = document.querySelector('#assets');
+<script>
+	
+const THREE = window.THREE || AFRAME.THREE;
 
-    // Create one bubble instance of your GLB at 'pos'
-    function makeBubbleEntity(pos, scale=1){
-      const e = document.createElement('a-entity');
-      e.setAttribute('gltf-model', '#bubbleGLB');
-      e.setAttribute('position', pos);
-      e.setAttribute('scale', `${scale} ${scale} ${scale}`);
+// --- IRIDESCENT MATERIAL (the working/simple version) ---
+AFRAME.registerComponent('bubble-iridescent', {
+  init() {
+    this.el.addEventListener('model-loaded', () => {
+      const mesh = this.el.getObject3D('mesh');
+      if (!mesh) return;
 
-      // Random gentle rotation so they don't all align
-      const rx = (Math.random()*20-10).toFixed(3);
-      const ry = (Math.random()*360).toFixed(3);
-      const rz = (Math.random()*20-10).toFixed(3);
-      e.setAttribute('rotation', `${rx} ${ry} ${rz}`);
+      mesh.traverse(n => {
+        if (!n.isMesh) return;
 
-      // Optional: subtle bob so they're alive (no interactivity)
-      const [px, py, pz] = pos.split(' ').map(Number);
-      const amp = 0.05 + Math.random()*0.07;
-      const dur = 2000 + Math.random()*1500;
-      e.setAttribute('animation__bob', `property: position; dir: alternate; dur: ${dur}; loop: true; to: ${px} ${(py+amp).toFixed(3)} ${pz}`);
+        const prev = n.material || {};
+        const usesSkin   = n.isSkinnedMesh || prev.skinning === true;
+        const usesMorphs = !!n.morphTargetInfluences || prev.morphTargets === true;
 
-      // If your GLB has an idle animation inside, this plays it. Harmless if none.
-      e.setAttribute('animation-mixer', 'loop: repeat');
+        const mat = new THREE.MeshPhysicalMaterial({
+          color:  0xffffff,
+          metalness: 0.0,
+          roughness: 0.03,
+          transparent: true,
+          opacity: 0.40,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.02,
+          side: THREE.FrontSide,
+          depthWrite: true
+        });
 
-      return e;
-    }
+        // preserve deformation flags & any existing maps
+        mat.skinning     = usesSkin;
+        mat.morphTargets = usesMorphs;
+        mat.morphNormals = usesMorphs;
+        mat.map          = prev.map || null;
+        mat.normalMap    = prev.normalMap || null;
+        mat.emissiveMap  = prev.emissiveMap || null;
 
-    // Spawn N bubbles around/in front of the camera
-    function spawnBubbles(count=10){
-      const camObj = cam.object3D;
-      const camWorldPos = new THREE.Vector3();
-      const camForward  = new THREE.Vector3(0,0,-1);
-      camObj.getWorldPosition(camWorldPos);
-      camObj.getWorldDirection(camForward);
+        // simple thin-film rainbow at grazing angles
+        mat.onBeforeCompile = (shader) => {
+          shader.fragmentShader = shader.fragmentShader.replace(
+            '#include <output_fragment>',
+            `
+              vec3 N = normalize(vNormal);
+              vec3 V = normalize(vViewPosition);
+              float ndv = abs(dot(N, V));
+              float fres = pow(1.0 - ndv, 3.0);
 
-      const up    = new THREE.Vector3(0,1,0);
-      const right = new THREE.Vector3().crossVectors(camForward, up).normalize();
+              float hue = fract(1.2 * (1.0 - ndv));
+              vec3 K = vec3(1.0, 2.0/3.0, 1.0/3.0);
+              vec3 p = abs(fract(vec3(hue) + K.xyz) * 6.0 - 3.0);
+              vec3 iri = mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), 0.85);
 
-      for (let i=0;i<count;i++){
-        // Distance 2–8m in front, with some lateral/vertical jitter
-        const dist    = 2 + Math.random()*6;
-        const jitterR = (Math.random()*2-1) * 1.8; // -1.8..1.8 m sideways
-        const jitterU = (Math.random()*2-1) * 1.2; // -1.2..1.2 m up/down
+              vec3 base = diffuseColor.rgb;
+              vec3 finalRGB = mix(base, iri, 0.75 * fres);
+              gl_FragColor = vec4(finalRGB, diffuseColor.a);
+            `
+          );
+        };
 
-        const pos = camWorldPos.clone()
-          .add(camForward.clone().multiplyScalar(dist))
-          .add(right.clone().multiplyScalar(jitterR))
-          .add(up.clone().multiplyScalar(jitterU));
+        n.material = mat;
+        n.material.needsUpdate = true;
+      });
 
-        // Various sizes
-        const scale = (0.6 + Math.random()*1.6).toFixed(2); // ~0.6–2.2x
-
-        const bubble = makeBubbleEntity(
-          `${pos.x.toFixed(3)} ${Math.max(0.1,pos.y).toFixed(3)} ${pos.z.toFixed(3)}`,
-          parseFloat(scale)
-        );
-        scene.appendChild(bubble);
-      }
-      console.log('[AR] Spawned', count, 'bubbles.');
-    }
-
-    function ready(cb){
-      const go = () => (assets.hasLoaded ? cb() : assets.addEventListener('loaded', cb, {once:true}));
-      scene.hasLoaded ? go() : scene.addEventListener('loaded', go, {once:true});
-    }
-
-    // Start after scene + assets are ready
-    ready(() => {
-      const item = document.querySelector('#bubbleGLB');
-      if (!item || !item.hasLoaded){
-        console.warn('[AR] GLB not loaded yet; waiting for assets...');
-        assets.addEventListener('loaded', () => spawnBubbles(10), {once:true});
-      } else {
-        spawnBubbles(10);
-      }
+      console.log('🌈 Iridescent bubble applied (animation preserved)');
     });
-  </script>
+  }
+});
+
+
+// --- VARIED SPAWNER (sizes, motion, spacing) ---
+AFRAME.registerComponent('bubble-spawner', {
+  schema: {
+    count: {type: 'int', default: 10},
+
+    // size
+    minScale: {type: 'number', default: 5},
+    maxScale: {type: 'number', default: 28},
+    nonUniform: {type: 'boolean', default: true}, // squish per axis 0.8–1.2
+
+    // placement
+    radiusMin: {type: 'number', default: 1.6},
+    radiusMax: {type: 'number', default: 3.2},
+    forwardBias: {type: 'number', default: 0.85}, // 0..1 (more in front)
+    yJitter: {type: 'number', default: 0.25},     // vertical randomness
+    minSeparation: {type: 'number', default: 0.6},// keep bubbles apart (meters)
+    maxPlacementTries: {type: 'int', default: 20},
+
+    // motion
+    speedMin: {type: 'number', default: 0.65},
+    speedMax: {type: 'number', default: 1.45},
+    bobMin:   {type: 'number', default: 0.06},
+    bobMax:   {type: 'number', default: 0.16},
+    bobDurMin:{type: 'int',    default: 1800},
+    bobDurMax:{type: 'int',    default: 3600},
+
+    // models
+    modelIds: {type: 'string', default: '#bubbleModel'}
+  },
+
+  init() {
+    const sceneEl = this.el.sceneEl;
+    const camEl = sceneEl.querySelector('#cam');
+    this._camEl = camEl;
+    this._modelIds = this.data.modelIds.split(',').map(s => s.trim()).filter(Boolean);
+
+    if (!sceneEl.hasLoaded) sceneEl.addEventListener('loaded', () => this.spawnAll());
+    else this.spawnAll();
+  },
+
+  spawnAll() {
+    const d = this.data;
+    const placed = []; // keep track of placed world positions for spacing
+
+    for (let i = 0; i < d.count; i++) {
+      // pick model
+      const modelId = this._modelIds[Math.floor(Math.random() * this._modelIds.length)];
+      const bubble = document.createElement('a-entity');
+
+      // size (with optional non-uniform squish)
+      const sBase = this.rand(d.minScale, d.maxScale);
+      const squish = (lo, hi) => d.nonUniform ? this.rand(lo, hi) : 1.0;
+      const sx = sBase * squish(0.8, 1.2);
+      const sy = sBase * squish(0.8, 1.2);
+      const sz = sBase * squish(0.8, 1.2);
+      bubble.setAttribute('scale', `${sx.toFixed(2)} ${sy.toFixed(2)} ${sz.toFixed(2)}`);
+
+      // rotation & animation speed
+      bubble.setAttribute('rotation', `${Math.floor(this.rand(-12,12))} ${Math.floor(Math.random()*360)} ${Math.floor(this.rand(-12,12))}`);
+      const tScale = this.rand(d.speedMin, d.speedMax);
+      bubble.setAttribute('animation-mixer', `loop: repeat; timeScale: ${tScale.toFixed(2)}`);
+
+      // model
+      bubble.setAttribute('gltf-model', modelId);
+      bubble.setAttribute('bubble-iridescent', ''); // keep your working material
+
+      // find a de-clumped world position
+      const world = this.findNonOverlappingWorldPos(placed);
+      bubble.setAttribute('position', `${world.x} ${world.y} ${world.z}`);
+      placed.push(world.clone());
+
+      // bob AFTER position is set (absolute from/to)
+      const bobAmp = this.rand(d.bobMin, d.bobMax);
+      const bobDur = Math.floor(this.rand(d.bobDurMin, d.bobDurMax));
+      bubble.setAttribute(
+        'animation__bob',
+        `property: position; dir: alternate; loop: true; easing: easeInOutSine; dur: ${bobDur}; from: ${world.x} ${world.y} ${world.z}; to: ${world.x} ${(world.y + bobAmp).toFixed(3)} ${world.z};`
+      );
+
+      // face camera after load for nicer look
+      bubble.addEventListener('model-loaded', () => {
+        bubble.object3D.lookAt(this._camEl.object3D.position);
+      });
+
+      this.el.appendChild(bubble);
+    }
+  },
+
+  // Sample a forward-biased hemisphere in CAMERA space, convert to world, de-clump.
+  findNonOverlappingWorldPos(placed) {
+    const d = this.data;
+    const cam = this._camEl.object3D;
+
+    for (let tries = 0; tries < d.maxPlacementTries; tries++) {
+      const local = this.sampleHemisphere(d.radiusMin, d.radiusMax, d.forwardBias, d.yJitter);
+      const world = new THREE.Vector3(local.x, local.y, local.z);
+      cam.localToWorld(world);
+
+      // spacing check
+      let ok = true;
+      for (let j = 0; j < placed.length; j++) {
+        if (world.distanceTo(placed[j]) < d.minSeparation) { ok = false; break; }
+      }
+      if (ok) return world;
+    }
+
+    // fallback: just return one sample if we couldn't satisfy spacing
+    const local = this.sampleHemisphere(d.radiusMin, d.radiusMax, d.forwardBias, d.yJitter);
+    const world = new THREE.Vector3(local.x, local.y, local.z);
+    cam.localToWorld(world);
+    return world;
+  },
+
+  sampleHemisphere(rMin, rMax, forwardBias, yJitter) {
+    // theta around Y, phi polar (hemisphere), bias toward forward (camera -Z)
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(1 - Math.random());
+    const frontPhi = phi * 0.5;
+
+    let x = Math.sin(frontPhi) * Math.cos(theta);
+    let y = Math.sin(frontPhi) * Math.sin(theta) * 0.7;
+    let z = Math.cos(frontPhi);
+
+    const f = THREE.MathUtils.lerp(0, 1, forwardBias);
+    z = THREE.MathUtils.lerp(z, 1.25, f); // push forward in camera space
+
+    const dir = new THREE.Vector3(x, y, z).normalize();
+    const dist = this.rand(rMin, rMax);
+    dir.multiplyScalar(dist);
+
+    // camera space forward is -Z, so ensure in front with negative Z
+    dir.z = -Math.abs(dir.z);
+    dir.y += this.rand(-yJitter, yJitter) + 0.1; // around eye height
+    return dir;
+  },
+
+  rand(a, b){ return a + Math.random() * (b - a); }
+});
+</script>
+
 </body>
 </html>
