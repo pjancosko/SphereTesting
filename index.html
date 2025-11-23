@@ -1,261 +1,208 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html>
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-
+  <meta charset="utf-8">
+  <title>A-Frame Sphere Spawner - World Space</title>
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.6/aframe/build/aframe-ar.min.js"></script>
-  <script src="https://unpkg.com/aframe-extras@6.1.1/dist/aframe-extras.loaders.min.js"></script>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #ui {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      z-index: 999;
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 20px;
+      border-radius: 10px;
+      font-family: Arial, sans-serif;
+    }
+    button {
+      background: #4CAF50;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      margin: 5px 0;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      width: 100%;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    #info {
+      margin-top: 10px;
+      font-size: 12px;
+      opacity: 0.8;
+    }
+  </style>
 </head>
-
 <body>
-  <a-scene
-    id="scene"
-    embedded
-    renderer="logarithmicDepthBuffer:true; colorManagement:true; physicallyCorrectLights:true"
-    vr-mode-ui="enabled:false"
-    arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false">
 
-    <a-assets id="assets">
-      <!-- Models: add more <a-asset-item> if you want different shapes later -->
-      <a-asset-item id="bubbleModel" src="BubbleTest2.glb"></a-asset-item>
-      <img id="env" src="envIMG.jpg" alt="environment map for reflections">
-    </a-assets>
+  <!-- UI Controls -->
+  <div id="ui">
+    <h3 style="margin-top: 0;">🌐 Sphere Spawner</h3>
+    <button onclick="spawnSphere()">Spawn Sphere</button>
+    <button onclick="spawnRandom()">Spawn 5 Random</button>
+    <button onclick="clearSpheres()">Clear All</button>
+    <div id="info">
+      <p>Spheres: <span id="count">0</span></p>
+      <p><strong>Controls:</strong></p>
+      <p>• WASD: Move around</p>
+      <p>• Mouse: Look around</p>
+      <p>• Space: Spawn sphere</p>
+    </div>
+  </div>
 
-    <a-entity light="type: ambient; intensity: 0.5"></a-entity>
-<a-entity light="type: directional; intensity: 1.4" position="0 2 2"></a-entity>
-<!-- optional: either delete this next light or keep it faint -->
-<a-entity light="type: point; intensity: 0.35; distance: 6; color: #ff99ff" position="1 2 2"></a-entity>
+  <!-- A-Frame Scene -->
+  <a-scene>
+    
+    <!-- Camera with movement controls -->
+    <a-entity id="rig" position="0 1.6 0">
+      <a-camera 
+        look-controls="pointerLockEnabled: false"
+        wasd-controls="enabled: true; acceleration: 30">
+      </a-camera>
+    </a-entity>
 
+    <!-- Lighting -->
+    <a-light type="ambient" color="#888"></a-light>
+    <a-light type="directional" position="2 4 -1" intensity="0.8"></a-light>
+    <a-light type="point" position="-3 3 0" color="#4A90E2" intensity="0.5"></a-light>
 
-    <!-- Camera -->
-    <a-entity id="cam" camera position="0 1.6 0" look-controls></a-entity>
+    <!-- Ground plane for reference -->
+    <a-plane 
+      position="0 0 0" 
+      rotation="-90 0 0" 
+      width="50" 
+      height="50" 
+      color="#333"
+      shadow="receive: true">
+    </a-plane>
 
-    <!-- Spawner root (will create 10 animated bubbles around the camera) -->
-    <a-entity id="bubble-root"
-  bubble-spawner="
-    count: 12;
-    minScale: 4; maxScale: 34;
-    radiusMin: 1.4; radiusMax: 3.8;
-    forwardBias: 0.9;
-    minSeparation: 0.8;
-  ">
-</a-entity>
+    <!-- Reference grid lines -->
+    <a-entity id="grid" position="0 0.01 0">
+      <a-box position="0 0 0" width="0.1" height="0.1" depth="0.1" color="#ff0000"></a-box>
+      <a-box position="5 0 0" width="0.1" height="0.1" depth="0.1" color="#00ff00"></a-box>
+      <a-box position="0 0 5" width="0.1" height="0.1" depth="0.1" color="#0000ff"></a-box>
+    </a-entity>
 
+    <!-- Container for spawned spheres (in world space) -->
+    <a-entity id="sphere-container"></a-entity>
 
   </a-scene>
 
-<script>
-	
-const THREE = window.THREE || AFRAME.THREE;
+  <script>
+    // Keep track of sphere count
+    let sphereCount = 0;
+    const container = document.querySelector('#sphere-container');
+    const countDisplay = document.querySelector('#count');
 
-// --- IRIDESCENT MATERIAL (the working/simple version) ---
-AFRAME.registerComponent('bubble-iridescent', {
-  init() {
-    this.el.addEventListener('model-loaded', () => {
-      const mesh = this.el.getObject3D('mesh');
-      if (!mesh) return;
+    // Array of colors for variety
+    const colors = [
+      '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
+      '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2'
+    ];
 
-      mesh.traverse(n => {
-        if (!n.isMesh) return;
-
-        const prev = n.material || {};
-        const usesSkin   = n.isSkinnedMesh || prev.skinning === true;
-        const usesMorphs = !!n.morphTargetInfluences || prev.morphTargets === true;
-
-        const mat = new THREE.MeshPhysicalMaterial({
-          color:  0xffffff,
-          metalness: 0.0,
-          roughness: 0.03,
-          transparent: true,
-          opacity: 0.40,
-          clearcoat: 1.0,
-          clearcoatRoughness: 0.02,
-          side: THREE.FrontSide,
-          depthWrite: true
-        });
-
-        // preserve deformation flags & any existing maps
-        mat.skinning     = usesSkin;
-        mat.morphTargets = usesMorphs;
-        mat.morphNormals = usesMorphs;
-        mat.map          = prev.map || null;
-        mat.normalMap    = prev.normalMap || null;
-        mat.emissiveMap  = prev.emissiveMap || null;
-
-        // simple thin-film rainbow at grazing angles
-        mat.onBeforeCompile = (shader) => {
-          shader.fragmentShader = shader.fragmentShader.replace(
-            '#include <output_fragment>',
-            `
-              vec3 N = normalize(vNormal);
-              vec3 V = normalize(vViewPosition);
-              float ndv = abs(dot(N, V));
-              float fres = pow(1.0 - ndv, 3.0);
-
-              float hue = fract(1.2 * (1.0 - ndv));
-              vec3 K = vec3(1.0, 2.0/3.0, 1.0/3.0);
-              vec3 p = abs(fract(vec3(hue) + K.xyz) * 6.0 - 3.0);
-              vec3 iri = mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), 0.85);
-
-              vec3 base = diffuseColor.rgb;
-              vec3 finalRGB = mix(base, iri, 0.75 * fres);
-              gl_FragColor = vec4(finalRGB, diffuseColor.a);
-            `
-          );
-        };
-
-        n.material = mat;
-        n.material.needsUpdate = true;
-      });
-
-      console.log('🌈 Iridescent bubble applied (animation preserved)');
-    });
-  }
-});
-
-
-// --- VARIED SPAWNER (sizes, motion, spacing) ---
-AFRAME.registerComponent('bubble-spawner', {
-  schema: {
-    count: {type: 'int', default: 10},
-
-    // size
-    minScale: {type: 'number', default: 5},
-    maxScale: {type: 'number', default: 28},
-    nonUniform: {type: 'boolean', default: true}, // squish per axis 0.8–1.2
-
-    // placement
-    radiusMin: {type: 'number', default: 1.6},
-    radiusMax: {type: 'number', default: 3.2},
-    forwardBias: {type: 'number', default: 0.85}, // 0..1 (more in front)
-    yJitter: {type: 'number', default: 0.25},     // vertical randomness
-    minSeparation: {type: 'number', default: 0.6},// keep bubbles apart (meters)
-    maxPlacementTries: {type: 'int', default: 20},
-
-    // motion
-    speedMin: {type: 'number', default: 0.65},
-    speedMax: {type: 'number', default: 1.45},
-    bobMin:   {type: 'number', default: 0.06},
-    bobMax:   {type: 'number', default: 0.16},
-    bobDurMin:{type: 'int',    default: 1800},
-    bobDurMax:{type: 'int',    default: 3600},
-
-    // models
-    modelIds: {type: 'string', default: '#bubbleModel'}
-  },
-
-  init() {
-    const sceneEl = this.el.sceneEl;
-    const camEl = sceneEl.querySelector('#cam');
-    this._camEl = camEl;
-    this._modelIds = this.data.modelIds.split(',').map(s => s.trim()).filter(Boolean);
-
-    if (!sceneEl.hasLoaded) sceneEl.addEventListener('loaded', () => this.spawnAll());
-    else this.spawnAll();
-  },
-
-  spawnAll() {
-    const d = this.data;
-    const placed = []; // keep track of placed world positions for spacing
-
-    for (let i = 0; i < d.count; i++) {
-      // pick model
-      const modelId = this._modelIds[Math.floor(Math.random() * this._modelIds.length)];
-      const bubble = document.createElement('a-entity');
-
-      // size (with optional non-uniform squish)
-      const sBase = this.rand(d.minScale, d.maxScale);
-      const squish = (lo, hi) => d.nonUniform ? this.rand(lo, hi) : 1.0;
-      const sx = sBase * squish(0.8, 1.2);
-      const sy = sBase * squish(0.8, 1.2);
-      const sz = sBase * squish(0.8, 1.2);
-      bubble.setAttribute('scale', `${sx.toFixed(2)} ${sy.toFixed(2)} ${sz.toFixed(2)}`);
-
-      // rotation & animation speed
-      bubble.setAttribute('rotation', `${Math.floor(this.rand(-12,12))} ${Math.floor(Math.random()*360)} ${Math.floor(this.rand(-12,12))}`);
-      const tScale = this.rand(d.speedMin, d.speedMax);
-      bubble.setAttribute('animation-mixer', `loop: repeat; timeScale: ${tScale.toFixed(2)}`);
-
-      // model
-      bubble.setAttribute('gltf-model', modelId);
-      bubble.setAttribute('bubble-iridescent', ''); // keep your working material
-
-      // find a de-clumped world position
-      const world = this.findNonOverlappingWorldPos(placed);
-      bubble.setAttribute('position', `${world.x} ${world.y} ${world.z}`);
-      placed.push(world.clone());
-
-      // bob AFTER position is set (absolute from/to)
-      const bobAmp = this.rand(d.bobMin, d.bobMax);
-      const bobDur = Math.floor(this.rand(d.bobDurMin, d.bobDurMax));
-      bubble.setAttribute(
-        'animation__bob',
-        `property: position; dir: alternate; loop: true; easing: easeInOutSine; dur: ${bobDur}; from: ${world.x} ${world.y} ${world.z}; to: ${world.x} ${(world.y + bobAmp).toFixed(3)} ${world.z};`
-      );
-
-      // face camera after load for nicer look
-      bubble.addEventListener('model-loaded', () => {
-        bubble.object3D.lookAt(this._camEl.object3D.position);
-      });
-
-      this.el.appendChild(bubble);
+    // Get a random color
+    function getRandomColor() {
+      return colors[Math.floor(Math.random() * colors.length)];
     }
-  },
 
-  // Sample a forward-biased hemisphere in CAMERA space, convert to world, de-clump.
-  findNonOverlappingWorldPos(placed) {
-    const d = this.data;
-    const cam = this._camEl.object3D;
+    // Get random position around camera
+    function getRandomPosition() {
+      const camera = document.querySelector('[camera]');
+      const cameraPos = camera.object3D.position;
+      
+      // Random position within a radius around camera
+      const distance = 2 + Math.random() * 5; // 2-7 units away
+      const angle = Math.random() * Math.PI * 2; // Random angle
+      const height = Math.random() * 4 - 1; // -1 to 3 height
+      
+      return {
+        x: cameraPos.x + Math.cos(angle) * distance,
+        y: height,
+        z: cameraPos.z + Math.sin(angle) * distance
+      };
+    }
 
-    for (let tries = 0; tries < d.maxPlacementTries; tries++) {
-      const local = this.sampleHemisphere(d.radiusMin, d.radiusMax, d.forwardBias, d.yJitter);
-      const world = new THREE.Vector3(local.x, local.y, local.z);
-      cam.localToWorld(world);
+    // Spawn a sphere at a position
+    function createSphere(position, radius = 0.3) {
+      const sphere = document.createElement('a-sphere');
+      sphere.setAttribute('position', `${position.x} ${position.y} ${position.z}`);
+      sphere.setAttribute('radius', radius);
+      sphere.setAttribute('color', getRandomColor());
+      sphere.setAttribute('shadow', 'cast: true');
+      
+      // Optional: Add animation
+      sphere.setAttribute('animation', {
+        property: 'position',
+        to: `${position.x} ${position.y + 0.2} ${position.z}`,
+        dir: 'alternate',
+        dur: 2000,
+        loop: true,
+        easing: 'easeInOutSine'
+      });
 
-      // spacing check
-      let ok = true;
-      for (let j = 0; j < placed.length; j++) {
-        if (world.distanceTo(placed[j]) < d.minSeparation) { ok = false; break; }
+      // Click to remove
+      sphere.classList.add('clickable');
+      sphere.addEventListener('click', function() {
+        container.removeChild(sphere);
+        sphereCount--;
+        updateCount();
+      });
+
+      container.appendChild(sphere);
+      sphereCount++;
+      updateCount();
+    }
+
+    // Spawn single sphere
+    function spawnSphere() {
+      const pos = getRandomPosition();
+      createSphere(pos);
+    }
+
+    // Spawn multiple random spheres
+    function spawnRandom() {
+      for (let i = 0; i < 5; i++) {
+        setTimeout(() => {
+          spawnSphere();
+        }, i * 200); // Stagger spawns
       }
-      if (ok) return world;
     }
 
-    // fallback: just return one sample if we couldn't satisfy spacing
-    const local = this.sampleHemisphere(d.radiusMin, d.radiusMax, d.forwardBias, d.yJitter);
-    const world = new THREE.Vector3(local.x, local.y, local.z);
-    cam.localToWorld(world);
-    return world;
-  },
+    // Clear all spheres
+    function clearSpheres() {
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
+      }
+      sphereCount = 0;
+      updateCount();
+    }
 
-  sampleHemisphere(rMin, rMax, forwardBias, yJitter) {
-    // theta around Y, phi polar (hemisphere), bias toward forward (camera -Z)
-    const theta = Math.random() * Math.PI * 2;
-    const phi = Math.acos(1 - Math.random());
-    const frontPhi = phi * 0.5;
+    // Update sphere count display
+    function updateCount() {
+      countDisplay.textContent = sphereCount;
+    }
 
-    let x = Math.sin(frontPhi) * Math.cos(theta);
-    let y = Math.sin(frontPhi) * Math.sin(theta) * 0.7;
-    let z = Math.cos(frontPhi);
+    // Keyboard controls
+    document.addEventListener('keydown', function(event) {
+      if (event.code === 'Space') {
+        event.preventDefault();
+        spawnSphere();
+      }
+    });
 
-    const f = THREE.MathUtils.lerp(0, 1, forwardBias);
-    z = THREE.MathUtils.lerp(z, 1.25, f); // push forward in camera space
+    // Spawn initial spheres for demo
+    setTimeout(() => {
+      for (let i = 0; i < 3; i++) {
+        setTimeout(() => spawnSphere(), i * 300);
+      }
+    }, 1000);
 
-    const dir = new THREE.Vector3(x, y, z).normalize();
-    const dist = this.rand(rMin, rMax);
-    dir.multiplyScalar(dist);
-
-    // camera space forward is -Z, so ensure in front with negative Z
-    dir.z = -Math.abs(dir.z);
-    dir.y += this.rand(-yJitter, yJitter) + 0.1; // around eye height
-    return dir;
-  },
-
-  rand(a, b){ return a + Math.random() * (b - a); }
-});
-</script>
+  </script>
 
 </body>
 </html>
-
