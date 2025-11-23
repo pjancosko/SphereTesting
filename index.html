@@ -2,150 +2,163 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>A-Frame Sphere Spawner - World Space</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>AR Sphere Spawner</title>
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
   <style>
     body { margin: 0; overflow: hidden; }
     #ui {
       position: fixed;
-      top: 20px;
-      left: 20px;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
       z-index: 999;
       background: rgba(0, 0, 0, 0.8);
       color: white;
-      padding: 20px;
-      border-radius: 10px;
+      padding: 15px 25px;
+      border-radius: 50px;
       font-family: Arial, sans-serif;
+      text-align: center;
     }
     button {
       background: #4CAF50;
       color: white;
       border: none;
-      padding: 10px 20px;
-      margin: 5px 0;
-      border-radius: 5px;
+      padding: 15px 30px;
+      margin: 5px;
+      border-radius: 25px;
       cursor: pointer;
-      font-size: 14px;
-      width: 100%;
+      font-size: 16px;
+      font-weight: bold;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    button:hover {
-      background: #45a049;
+    button:active {
+      transform: scale(0.95);
     }
     #info {
-      margin-top: 10px;
-      font-size: 12px;
-      opacity: 0.8;
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 999;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
     }
   </style>
 </head>
 <body>
 
-  <!-- UI Controls -->
-  <div id="ui">
-    <h3 style="margin-top: 0;">🌐 Sphere Spawner</h3>
-    <button onclick="spawnSphere()">Spawn Sphere</button>
-    <button onclick="spawnRandom()">Spawn 5 Random</button>
-    <button onclick="clearSpheres()">Clear All</button>
-    <div id="info">
-      <p>Spheres: <span id="count">0</span></p>
-      <p><strong>Controls:</strong></p>
-      <p>• WASD: Move around</p>
-      <p>• Mouse: Look around</p>
-      <p>• Space: Spawn sphere</p>
-    </div>
+  <!-- Info Display -->
+  <div id="info">
+    Spheres: <span id="count">0</span> | Tap screen or button to spawn
   </div>
 
-  <!-- A-Frame Scene -->
-  <a-scene>
-    
-    <!-- Camera with movement controls -->
-    <a-entity id="rig" position="0 1.6 0">
-      <a-camera 
-        look-controls="pointerLockEnabled: false"
-        wasd-controls="enabled: true; acceleration: 30">
-      </a-camera>
-    </a-entity>
+  <!-- Spawn Button -->
+  <div id="ui">
+    <button id="spawn-btn">🌟 SPAWN SPHERE</button>
+  </div>
 
-    <!-- Lighting -->
-    <a-light type="ambient" color="#888"></a-light>
-    <a-light type="directional" position="2 4 -1" intensity="0.8"></a-light>
-    <a-light type="point" position="-3 3 0" color="#4A90E2" intensity="0.5"></a-light>
+  <!-- AR Scene -->
+  <a-scene
+    embedded
+    arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+    vr-mode-ui="enabled: false"
+    renderer="logarithmicDepthBuffer: true; precision: medium;"
+    gesture-detector>
 
-    <!-- Ground plane for reference -->
-    <a-plane 
-      position="0 0 0" 
-      rotation="-90 0 0" 
-      width="50" 
-      height="50" 
-      color="#333"
-      shadow="receive: true">
-    </a-plane>
+    <!-- AR Camera -->
+    <a-entity camera look-controls="enabled: false"></a-entity>
 
-    <!-- Reference grid lines -->
-    <a-entity id="grid" position="0 0.01 0">
-      <a-box position="0 0 0" width="0.1" height="0.1" depth="0.1" color="#ff0000"></a-box>
-      <a-box position="5 0 0" width="0.1" height="0.1" depth="0.1" color="#00ff00"></a-box>
-      <a-box position="0 0 5" width="0.1" height="0.1" depth="0.1" color="#0000ff"></a-box>
-    </a-entity>
-
-    <!-- Container for spawned spheres (in world space) -->
+    <!-- Container for spheres in world space -->
     <a-entity id="sphere-container"></a-entity>
+
+    <!-- Ambient light -->
+    <a-light type="ambient" color="#BBB"></a-light>
+    <a-light type="directional" position="0 1 0" intensity="0.5"></a-light>
 
   </a-scene>
 
   <script>
-    // Keep track of sphere count
+    // Sphere tracking
     let sphereCount = 0;
     const container = document.querySelector('#sphere-container');
     const countDisplay = document.querySelector('#count');
+    const spawnBtn = document.querySelector('#spawn-btn');
 
-    // Array of colors for variety
+    // Color palette
     const colors = [
       '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
-      '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2'
+      '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
+      '#FF85A2', '#7FDBFF', '#39CCCC', '#FFDC00'
     ];
 
-    // Get a random color
     function getRandomColor() {
       return colors[Math.floor(Math.random() * colors.length)];
     }
 
-    // Get random position around camera
-    function getRandomPosition() {
+    // Get position in front of camera in world space
+    function getSpawnPosition() {
       const camera = document.querySelector('[camera]');
-      const cameraPos = camera.object3D.position;
+      const cameraEl = camera.object3D;
       
-      // Random position within a radius around camera
-      const distance = 2 + Math.random() * 5; // 2-7 units away
-      const angle = Math.random() * Math.PI * 2; // Random angle
-      const height = Math.random() * 4 - 1; // -1 to 3 height
+      // Get camera's world position and direction
+      const direction = new THREE.Vector3();
+      cameraEl.getWorldDirection(direction);
       
-      return {
-        x: cameraPos.x + Math.cos(angle) * distance,
-        y: height,
-        z: cameraPos.z + Math.sin(angle) * distance
-      };
+      const position = new THREE.Vector3();
+      cameraEl.getWorldPosition(position);
+      
+      // Random offset from center
+      const spreadX = (Math.random() - 0.5) * 2; // -1 to 1
+      const spreadY = (Math.random() - 0.5) * 2; // -1 to 1
+      const distance = 2 + Math.random() * 3; // 2-5 units away
+      
+      // Calculate spawn position
+      const spawnPos = new THREE.Vector3(
+        position.x + direction.x * distance + spreadX,
+        position.y + direction.y * distance + spreadY,
+        position.z + direction.z * distance
+      );
+      
+      return spawnPos;
     }
 
-    // Spawn a sphere at a position
-    function createSphere(position, radius = 0.3) {
-      const sphere = document.createElement('a-sphere');
-      sphere.setAttribute('position', `${position.x} ${position.y} ${position.z}`);
-      sphere.setAttribute('radius', radius);
-      sphere.setAttribute('color', getRandomColor());
-      sphere.setAttribute('shadow', 'cast: true');
+    // Create sphere in world space
+    function spawnSphere() {
+      const pos = getSpawnPosition();
       
-      // Optional: Add animation
+      const sphere = document.createElement('a-sphere');
+      sphere.setAttribute('position', `${pos.x} ${pos.y} ${pos.z}`);
+      sphere.setAttribute('radius', '0.15');
+      sphere.setAttribute('color', getRandomColor());
+      sphere.setAttribute('metalness', '0.3');
+      sphere.setAttribute('roughness', '0.7');
+      
+      // Add gentle floating animation
       sphere.setAttribute('animation', {
         property: 'position',
-        to: `${position.x} ${position.y + 0.2} ${position.z}`,
+        to: `${pos.x} ${pos.y + 0.1} ${pos.z}`,
         dir: 'alternate',
-        dur: 2000,
+        dur: 1500,
         loop: true,
         easing: 'easeInOutSine'
       });
 
-      // Click to remove
+      // Add rotation for visual interest
+      sphere.setAttribute('animation__rotate', {
+        property: 'rotation',
+        to: '0 360 0',
+        dur: 4000,
+        loop: true,
+        easing: 'linear'
+      });
+
+      // Click to remove (for touch devices)
       sphere.classList.add('clickable');
       sphere.addEventListener('click', function() {
         container.removeChild(sphere);
@@ -156,51 +169,52 @@
       container.appendChild(sphere);
       sphereCount++;
       updateCount();
+      
+      console.log(`Spawned sphere at: ${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}`);
     }
 
-    // Spawn single sphere
-    function spawnSphere() {
-      const pos = getRandomPosition();
-      createSphere(pos);
-    }
-
-    // Spawn multiple random spheres
-    function spawnRandom() {
-      for (let i = 0; i < 5; i++) {
-        setTimeout(() => {
-          spawnSphere();
-        }, i * 200); // Stagger spawns
-      }
-    }
-
-    // Clear all spheres
-    function clearSpheres() {
-      while (container.firstChild) {
-        container.removeChild(container.firstChild);
-      }
-      sphereCount = 0;
-      updateCount();
-    }
-
-    // Update sphere count display
+    // Update count display
     function updateCount() {
       countDisplay.textContent = sphereCount;
     }
 
-    // Keyboard controls
-    document.addEventListener('keydown', function(event) {
-      if (event.code === 'Space') {
-        event.preventDefault();
+    // Button click handler
+    spawnBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      spawnSphere();
+    });
+
+    // Touch/click on screen to spawn
+    const scene = document.querySelector('a-scene');
+    scene.addEventListener('click', function(e) {
+      // Only spawn if not clicking the button
+      if (!e.target.closest('#ui')) {
         spawnSphere();
       }
     });
 
-    // Spawn initial spheres for demo
-    setTimeout(() => {
-      for (let i = 0; i < 3; i++) {
-        setTimeout(() => spawnSphere(), i * 300);
+    // Register gesture detector component for better mobile interaction
+    AFRAME.registerComponent('gesture-detector', {
+      init: function() {
+        this.handleTouch = this.handleTouch.bind(this);
+        this.el.addEventListener('touchstart', this.handleTouch);
+      },
+      handleTouch: function(e) {
+        // Touch detected - you could add custom logic here
+        console.log('Touch detected');
       }
-    }, 1000);
+    });
+
+    // Wait for scene to load, then spawn initial spheres
+    scene.addEventListener('loaded', function() {
+      console.log('AR Scene loaded! Point camera around and tap to spawn spheres.');
+      
+      // Spawn a few initial spheres after 1 second
+      setTimeout(() => {
+        spawnSphere();
+      }, 1000);
+    });
 
   </script>
 
