@@ -1,81 +1,197 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html>
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-
-  <!-- A-Frame -->
-  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-
-  <script>
-    // Component to spawn spheres around the camera in real 3D world space
-    AFRAME.registerComponent('bubble-spawner', {
-      schema: {
-        count:   {default: 20},   // how many spheres to spawn
-        minDist: {default: 1.0},  // min distance from camera
-        maxDist: {default: 3.0},  // max distance from camera
-        minY:    {default: -0.5}, // vertical range relative to camera
-        maxY:    {default: 1.5}
-      },
-
-      init: function () {
-        this.cameraEl = document.querySelector('[camera]');
-        // Wait a tiny bit so AR session has time to start & camera pose is valid
-        setTimeout(() => this.spawnBubbles(), 1000);
-      },
-
-      spawnBubbles: function () {
-        if (!this.cameraEl) {
-          console.warn('No [camera] entity found');
-          return;
-        }
-
-        const sceneEl = this.el;              // the <a-scene>
-        const camObj  = this.cameraEl.object3D;
-        const camPos  = new THREE.Vector3();
-        camObj.getWorldPosition(camPos);
-
-        const data = this.data;
-
-        for (let i = 0; i < data.count; i++) {
-          // random direction on XZ plane
-          const angle = Math.random() * Math.PI * 2;
-          const dist  = data.minDist + Math.random() * (data.maxDist - data.minDist);
-          const yOff  = data.minY + Math.random() * (data.maxY - data.minY);
-
-          const x = camPos.x + Math.cos(angle) * dist;
-          const z = camPos.z + Math.sin(angle) * dist;
-          const y = camPos.y + yOff;
-
-          const bubble = document.createElement('a-sphere');
-          bubble.setAttribute('radius', 0.12);
-          bubble.setAttribute('position', `${x} ${y} ${z}`);
-          bubble.setAttribute('color', '#AEE5FF');
-          bubble.setAttribute('opacity', 0.6);
-          bubble.setAttribute('transparent', true);
-          bubble.setAttribute('metalness', 0.1);
-          bubble.setAttribute('roughness', 0.1);
-
-          sceneEl.appendChild(bubble);
-        }
-      }
-    });
-  </script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>AR Sphere Spawner</title>
+<script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+<script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+<script src="https://raw.githack.com/fcor/arjs-gestures/master/dist/gestures.js"></script>
+<style>
+  body { margin: 0; overflow: hidden; }
+  #ui {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 999;
+    text-align: center;
+  }
+  button {
+    background: #4CAF50;
+    color: white;
+    border: none;
+    padding: 20px 40px;
+    margin: 5px;
+    border-radius: 50px;
+    cursor: pointer;
+    font-size: 18px;
+    font-weight: bold;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+  }
+  button:active {
+    transform: scale(0.95);
+  }
+  #info {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 999;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 15px 30px;
+    border-radius: 30px;
+    font-family: Arial, sans-serif;
+    font-size: 16px;
+  }
+</style>
 </head>
+<body>
 
-<body style="margin: 0; overflow: hidden;">
-  <a-scene
-    renderer="antialias:true; colorManagement:true; physicallyCorrectLights:true"
-    webxr="mode: ar; optionalFeatures: hit-test, local-floor"
-    embedded
-    bubble-spawner>
+<div id="info">Sphere Groups: <span id="count">0</span></div>
 
-    <!-- AR camera -->
-    <a-entity camera position="0 1.6 0"></a-entity>
+<div id="ui">
+  <button id="spawn-btn">🌟 SPAWN SPHERES</button>
+</div>
 
-    <!-- Soft ambient light so bubbles aren’t totally flat -->
-    <a-entity light="type: ambient; intensity: 1.0"></a-entity>
-    <a-entity light="type: directional; intensity: 0.6" position="1 3 2"></a-entity>
-  </a-scene>
+<a-scene 
+  arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;"
+  embedded
+  renderer="logarithmicDepthBuffer: true;"
+  vr-mode-ui="enabled: false"
+  gesture-detector
+  id="scene">
+  
+  <a-light type="ambient" color="#222" intensity="10"></a-light>
+  <a-camera></a-camera>
+
+  <!-- Container for spawned sphere groups -->
+  <a-entity id="sphere-groups"></a-entity>
+
+  <a-sky material="opacity: 0.5; transparent: true; color: #CEF5FF"></a-sky>
+</a-scene>
+
+<script>
+  let groupCount = 0;
+  const container = document.querySelector('#sphere-groups');
+  const countDisplay = document.querySelector('#count');
+  const spawnBtn = document.querySelector('#spawn-btn');
+
+  // Color palette for spheres
+  const colors = [
+    '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
+    '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
+    '#FF85A2'
+  ];
+
+  function getRandomColor() {
+    return colors[Math.floor(Math.random() * colors.length)];
+  }
+
+  function spawnSphereGroup() {
+    // Create parent container with descending animation (like the birds)
+    const group = document.createElement('a-entity');
+    group.setAttribute('position', '0 20 0');
+    group.setAttribute('rotation', '0 90 0');
+    group.setAttribute('animation', {
+      property: 'position',
+      to: '0 0 0',
+      dur: 10000,
+      dir: 'alternate',
+      easing: 'linear',
+      loop: true
+    });
+    group.setAttribute('scale', '2 2 2');
+
+    // Create 9 spheres in a circle (matching the bird count)
+    const sphereConfigs = [
+      { startRot: -30, endRot: 330, radius: 0.5, color: getRandomColor() },
+      { startRot: 10, endRot: 370, radius: 0.6, color: getRandomColor() },
+      { startRot: 65, endRot: 425, radius: 0.4, color: getRandomColor() },
+      { startRot: 100, endRot: 460, radius: 0.3, color: getRandomColor() },
+      { startRot: 145, endRot: 505, radius: 0.5, color: getRandomColor() },
+      { startRot: 185, endRot: 545, radius: 0.4, color: getRandomColor() },
+      { startRot: 220, endRot: 580, radius: 0.6, color: getRandomColor() },
+      { startRot: 250, endRot: 610, radius: 0.5, color: getRandomColor() },
+      { startRot: 280, endRot: 640, radius: 0.4, color: getRandomColor() }
+    ];
+
+    sphereConfigs.forEach((config, index) => {
+      // Rotating arm
+      const arm = document.createElement('a-entity');
+      arm.setAttribute('position', '0 0 3');
+      arm.setAttribute('rotation', `0 ${config.startRot} 0`);
+      arm.setAttribute('animation', {
+        property: 'rotation',
+        to: `0 ${config.endRot} 0`,
+        dur: 30000,
+        easing: 'linear',
+        loop: true
+      });
+
+      // Sphere at end of arm
+      const sphere = document.createElement('a-sphere');
+      sphere.setAttribute('position', '0 0 -10');
+      sphere.setAttribute('radius', config.radius);
+      sphere.setAttribute('color', config.color);
+      sphere.setAttribute('metalness', '0.3');
+      sphere.setAttribute('roughness', '0.7');
+      
+      // Add emissive glow
+      sphere.setAttribute('material', `shader: flat; emissive: ${config.color}; emissiveIntensity: 0.5`);
+
+      // Add floating animation
+      sphere.setAttribute('animation__float', {
+        property: 'position',
+        to: `0 0.3 -10`,
+        dur: 2000 + Math.random() * 1000,
+        dir: 'alternate',
+        easing: 'easeInOutSine',
+        loop: true
+      });
+
+      // Add random rotation
+      sphere.setAttribute('animation__rotate', {
+        property: 'rotation',
+        to: `${Math.random() * 360} ${Math.random() * 360} ${Math.random() * 360}`,
+        dur: 5000 + Math.random() * 3000,
+        easing: 'linear',
+        loop: true
+      });
+
+      arm.appendChild(sphere);
+      group.appendChild(arm);
+    });
+
+    container.appendChild(group);
+    groupCount++;
+    countDisplay.textContent = groupCount;
+
+    console.log(`Spawned sphere group #${groupCount}`);
+  }
+
+  // Button click handler
+  spawnBtn.addEventListener('click', function() {
+    spawnSphereGroup();
+  });
+
+  // Auto-spawn first group when scene loads
+  document.querySelector('a-scene').addEventListener('loaded', function() {
+    console.log('AR Scene loaded! Camera active.');
+    setTimeout(() => {
+      spawnSphereGroup();
+    }, 1000);
+  });
+
+  // Optional: Tap anywhere on screen to spawn
+  const scene = document.querySelector('a-scene');
+  scene.addEventListener('click', function(e) {
+    if (!e.target.closest('#ui')) {
+      spawnSphereGroup();
+    }
+  });
+</script>
+
 </body>
 </html>
